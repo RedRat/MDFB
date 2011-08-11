@@ -1,0 +1,525 @@
+Documentation for MDFB-{VERSION}.bas 
+
+Fast/slow motion detector script with burst/review/video support and 
+optional masking and test mode
+
+Version 080914
+by fudgey
+
+-------------------------------------------------------------------------------
+
+Note: There are two versions of the script, for
+        - cameras with no video (movie) button (A, G and IXUS/SD series)
+        - cameras with with video (movie) button (s2is, s3is, s5is, tx1)
+
+      S series and TX1 handle video mode differently from the A, G and IXUS/SD
+      series cameras which is why they need their own version.
+      
+      Past versions of this script required separate versions for Digic II and 
+      Digic III propset cameras. This is no longer the case. But,
+      
+      ***********************************
+      A VERY RECENT CHDK IS NOW REQUIRED.
+      ***********************************
+      
+      If your CHDK is older than September 14th 2008, it is likely not compatible
+      (unless it's a recent juciphox build). This is because I used some new 
+      universal script commands to get rid of those different script versions. 
+      
+
+Note: Ae lock (many cameras don't have this, it's found at least in S3IS)
+      is not compatible with still photo modes of this script. Disable it
+      or the script will enter an infinite loop doing nothing after
+      the first detection of motion (because of how get_prop 205/206 works;
+      this may be resolved in the future but it needs changes to CHDK).
+
+Note: Your camera's shot review options may affect this script, for 
+      fastest transition between end-of-shooting and re-arming of MD, 
+      turn review off from the Canon menu. Review does not affect
+      speed of detection or shutter lag.
+      
+Note: To prevent Canon firmware from shutting down the LCD and the camera, you
+      must set in CHDK menu Miscellaneous -> Disable LCD Off = Script, and 
+      possibly disable camera off behavior from Canon's power savings menu as 
+      well.
+
+Note: If flashlight is not disabled AND the Ae beam (auto exposure assist 
+      light) is not disabled either, the Ae beam will shine constantly during 
+      fast react motion detection (this happens at least on a570is and a720is).
+      This is not a bug, this is exactly how the camera behaves when you do 
+      this even without CHDK.
+
+Note: This script is endless and will never end. This is not good script 
+      coding practice, but checking for button presses would take precious 
+      time from sitting in the motion detection routine. You can interrupt 
+      the script (like any script) by full-pressing shutter. No camera settings 
+      are changed (I think), especially not if you interrupt while MD is 
+      waiting for motion. 
+
+Note: md_detect_mode "PARAMETERS" argument is always 9 in fast mode. This 
+      means  "make immediate shoot" and the new feature, "no shutter release 
+      on shoot" are enabled. In other words, md_detect_motion presses the 
+      shutter and the script releases it. This parameter does not exist on old, 
+      obsolete CHDK builds. Any recent Allbest, SDM or juciphox/collaborative
+      build should work.
+
+Note: It appears that you can turn the mode dial while running this script. 
+      You can start in M mode with finely tuned parameters and then try an 
+      automatic mode for a while and go back to M mode without ever 
+      interrupting the script. It may trigger when switching. And be careful 
+      with changing to/from video mode.
+
+Bug:  Flashlight may not be compatible with this script. It's adviceable
+      not to use auto flash or flash enable modes when the camera
+      is unattended, unless you don't mind the camera randomly 
+      turning itself off without retracting the lense (there is no
+      known danger here, just the inconvenience of losing the shot and
+      having to power the camera on again). At least A570IS and S3IS are
+      affected. Try if you dare.
+
+Bug:  It has been noticed that with the camera in video mode, motion detector
+      is not be able to trigger from motion on the entire LCD. Additionally, 
+      in video mode the mask may not work as expected. Use the test mode to
+      find out which parts of the display really are active or you may be 
+      disappointed. Different video resolution/framerate modes seem to behave
+      differently, for example with the A570IS the normal 30fps mode is the 
+      worst, with the bottom half of the LCD inactive for triggering. This is
+      very likely a problem in CHDK, not this script i.e. CHDK md_motion_detect
+      seems slightly incompatible with video modes. This could be a performance
+      problem of some sort, and if that's the case it likely affects different
+      camera models differently.
+
+Tip:  Avoid "AUTO" shooting mode. Use "P" instead of "AUTO".
+
+Tip:  Remember that you can use the zoom lever/buttons to change
+      values in larger steps than one when in script settings menu.
+
+Tip:  If you get into a "MD trigger shoot loop", where the motion detector
+      always shoots right after it becomes rearmed after the previous shoot
+      even if doesn't seem to be any motion:
+        * Verify that you have the correct version of the script for your
+          camera model.
+        * Increase threshold (noise on the LCD may be the cause: the default
+          threshold (10) is too low for many low-light conditions).
+        * If the two things above don't help, increase trigger delay.
+
+Tip:  If you are shooting a high-contrast scene with the movement to be
+      detected happening in shadows, you can improve reliability of detection
+      by setting your actual desired photo exposure using CHDK overrides
+      (in extra shooting options menu) and then setting the camera's own
+      controls to somewhat overexpose the scene (Av, Tv, Ev adjustments,
+      depending on camera mode). This is only effective in fast react MD
+      mode. Note that you should override aperture, not shutter speed or ISO
+      (unless aperture is already wide open, because widening the aperture
+      truly increases light that hits the sensor and thus reduces noise on 
+      the LCD. 
+
+Tip:  When shooting lightnings in bright daylight, the lightning may not be
+      bright enough to trigger the motion detector using the exposure settings
+      that would otherwise be good for the shot. You can circumvent this by
+      setting your actual desired exposure using CHDK overrides and running
+      the MD script with a severely underexposed scene. The photo will use
+      the overrided setting and the dark view if only used for MD. 
+
+Tip:  To conserve batteries, you may plug an A/V cable (any plug or adapter 
+      that fits the jack will do, no need to have any cables or equipment 
+      connected) to your A/V jack. What will happen is that your LCD will 
+      turn off, possibly saving significant amounts of battery power. Motion 
+      detection still works, because the camera thinks you have an external 
+      TV monitor connected and will update it's viewfinder image (which is 
+      what MD uses for detection). Unplug to get your LCD image back (may 
+      not be instant and you may need to interrupt the script, but there
+      should be no need to reboot the camera).
+
+-------------------------------------------------------------------------------
+
+Description:
+============
+
+This is my fast motion detection script. It's ment to be as fast as currently 
+possible (at least for my A570IS), but it also has a "slow shoot" mode of 
+operation. Both have their pros and cons. By "fast" I mean the time from 
+motion to shutter opening, a cruicial time in things such as lightning 
+photography.
+
+As a direct consequence of the speed, this script will not autofocus right 
+before it shoots (unless it's in the slow shoot mode). In other words, in 
+fast react mode this script does not focus to a moving object when one 
+appears before the lens. This is because focusing takes a lot of time.
+
+If not in slow shoot mode, this script will autofocus and autoexposure 
+(if the camera is in automatic focus mode) when it starts and AFTER
+every time it has finished shooting AND after a timeout. This means
+that if an object appears in front of the camera and stays there, moving 
+around for a while, the camera will probably detect motion again and you 
+will get in-focus images too.
+
+The script also has two video modes, slow and fast, very much like the
+two options for still shooting. Note that the script will not put
+the camera in video (movie) mode for you, you need to do that manually
+before starting the script (unless you have a camera with a separate
+movie button; in that case you only have a slow react video mode but
+no need to set the camera to a video mode before starting the script).
+
+Likewise, the still modes are not ment to be used in video shooting modes.
+
+
+The speed that can be achieved may be different for each camera model.
+There will be significant variation from shot to shot too. Also, changing
+parameters will affect speed of detection; at least if you set pixel step
+too low. With my A570IS I get motion-to-shutter-opening delays between 
+80 ms and 150 ms, averaging at about 110 ms, but don't be surprised if
+you occasionally get a significantly slower response. There is an optimization
+modification pending for CHDK, I currently run a development build which 
+gives me a reliable delay between about 80 ms and 110 ms, with median
+below 90 ms. 
+
+This script will not change camera shooting parameters. You need to
+set the camera into the shooting modes you want the script to operate
+with. The camera will take images just as it would if it was you
+who is keeping the shutter depressed:
+
+  - If in normal single shooting drive mode, a single photo will be 
+  taken after each time motion is detected. If you set burst/review time
+  to >0 seconds, the shot will be reviewed on the LCD for the set time
+  before motion detection will be armed again.
+  
+  - If in continous shooting drive mode, a burst of images will be taken.
+  The shooting time is set by burst/review time in seconds, it must
+  be greater than 0 for more than 1 shot to be taken. No extended 
+  review of the last shot available. The number of shots is determined
+  by your camera's shooting speed and depends on things such as 
+  camera model, shutter speed, ISO value, RAW mode, memory card speed,
+  noise reduction setting etc. This is why even a 3 second burst may
+  sometimes give you no more than one photo.
+  
+    Tip:  For the highest possible burst rate (photos per second), 
+      * Disable RAW.
+      * Use a fast shutter speed (Tv).
+      * Do not use ISO 200 or higher (camera will spend time applying 
+        some noise reduction filtering).
+      * Use a sufficiently fast SD card and keep it defragmented by
+        full erase as often as you find convenient.
+      * Enable the digital telephoto feature and choose the one and only
+        JPEG image size for which the camera doesn't need to resize
+        the photo (for a570is 1,9x digital telephoto this means 1600x1200).
+        At least on the a570is the digital telephoto feature is marked
+        with a "T" symbol on the LCD, and the optimum JPEG resolution
+        can be found by decreasing JPEG resolution setting until the "T" symbol
+        is no longer blue. Note that reducing JPEG resolution further (or
+        without the digital telephoto feature) will slow down the burst 
+        because the camera will have to resize the image (unless your SD card
+        is very slow). Your camera may not have this feature.
+  
+  - If in custom timer mode, images will be taken after the delay
+  you have set in the camera and the AF light will blink, then 1 to 10
+  shots will be taken depending on how many you've selected (your
+  camera model may have a different set of parameters), and the AF
+  light will blink between the shots. Note that the repetition rate is 
+  slower than in continous drive mode.
+
+The script lets the camera autoexposure and autofocus unless you prevent
+it. This means you can use shooting modes other than M with this script
+Be aware that in fast mode, exposure and focus are set first when the script
+starts and after that only after the script shoots or timeouts. Timeout is 
+by default set to 5 minutes (300 seconds) so even fairly rapid changes in
+sunlight will be adjusted to properly.
+
+If you shoot fast objects, make sure focus isn't a problem (for
+example by using manual focus to the distance your objects are moving
+at by average and/or by shooting from a distance) and that shutter speed
+is short enough. 
+
+If you shoot objects that move slowly, you can use the slow shoot option
+to solve the focus problem.
+
+This script is ment to shoot quickly after something moves on the LCD. 
+If you also want the script to be detecting motion again as soon as possible
+after taking a shot, you should:
+  - use manual exposure (camera in M mode), must be set before running the 
+    script
+  - use manual focus, must be set before running the script
+  - set trigger delay to the minimum allowable in your camera in your
+    shooting conditions (possibly 0)
+  - set burst/review time = 0 unless you want several images in
+    continous shooting drive mode
+  - disable shot review from Canon's menus
+  - disable noise reduction in CHDK RAW menu (if using long exposures)
+  - disable RAW saving
+  - use a fast, defragmented memory card
+
+Also, it may not be a good idea to enable histogram and zebra in a way
+that makes them be displayed during motion detect.
+
+-------------------------------------------------------------------------------
+
+Parameters:
+===========
+
+Channel: 
+
+Selects the color space component to monitor for motion detection.
+U, Y and V are the YUV space color components. Default is to use luminance 
+Y (brightness). Alternatively red, green or blue channels of RGB color 
+space can be used.
+
+
+Columns, Rows: 
+
+Motion detect works by averaging the color space parameter
+selected in the "Channel" parameter on the screen. The screen is divided
+in to N=columns*rows cells, and average is calculated for each
+cell. Smaller cells may make detection more sensitive to smaller object
+and smaller movements. The cells are drawn on the LCD when MD
+is running. Also study the Pixel Step and threshold parameters.
+
+
+Pixel Step: 
+
+An average is calculated from the contents of each cell. 
+This pixel step parameter makes this a bit more complicated, because
+if it is >1, it makes the motion detector skip pixels and only 
+use every Nth pixel vertically and horizontally (N is the value you give,
+default is every 6th pixel, top left corner of the LCD is the first
+active pixel).
+
+Setting this parameter 1 is not recommended, because calculating all
+pixels will take a lot of time from the camera and you might end up using
+more time than the 10 ms CHDK interval. Odd things might happen. If you
+must use a low pixel step value, be instructed that you may need to increase
+trigger delay (explained later). 
+
+On the other hand, setting this parameter too big will make detection of 
+small objects a matter of luck as they may or may not move around the pixels 
+that are being monitored. Note that if your pixel step is high, there
+may be cells (especially if you have lots of cells) which don't have any
+active pixels!
+
+
+Threshold: 
+
+The lower the threshold, the smaller a change in a cell will trigger
+motion detection. In low light, higher threshold is required
+or noise will cause spurious triggering. Along with decrease in the 
+number of cells, increasing threshold will make motion detection less 
+trigger-happy if you have problems with e.g. trees moving in the wind
+causing unwanted pictures to be taken. Changing compare interval
+will also affect triggering.
+
+
+Compare interval (milliseconds): 
+
+Motion detect takes one sample from the display, then waits a time specified
+by the "compare interval" parameter before taking another sample and then
+compares these two. The default is very fast to optimize speed of detection
+when shooting fast things, e.g. lightnings, but it's not suitable for things
+that move slowly.
+
+If interval is short, objects that move slowly will not trigger motion 
+detection no matter how big the object is. Similarly, gradual changes in the
+amount of sunlight will not cause a trigger if compare interval is short 
+enough.
+
+Note that while you can specify an interval as low as 1 ms, only multiplies 
+of 10 ms will actually have any effect as this is the finest time step 
+available for motion detection (it comes from the camera's keyboard polling 
+interval). And even further, 30 ms may be the shortest you can go if/when 
+the LCD update period is 30 ms.
+
+So, with intervals shorter 10 ms, the motion detector is probably comparing
+identical pictures two times out of three but it is also working at maximum
+available speed of detection because an LCD update will be noticed during
+the first CHDK period after the update.
+
+
+Trigger delay: 
+
+How long to wait for camera to stabilize before starting to detect motion. 
+A low value means the camera will be detecting motion again promptly after
+taking a picture (unless you have things like RAW saving or shot review
+enabled). A large value means that after your shooting (and picture
+review) the motion detector will be started and the motion detector grid
+will be drawn, but it will not react to any movement until trigger delay
+has passed. This may be useful for making sure you don't get too many images
+of a bird landing in front of the camera if you only want photos of flying
+birds, not of ones jumping around.
+
+In the past a long trigger delay was needed to prevent motion detector 
+scripts from entering eternal shooting loops, where the camera's post-shooting
+actions (such as adjusting LCD contrast) caused motion detect to trigger 
+instantly. Increasing trigger delay helped, but the problem was that a lot of
+things affected the length of the required delay (slow shutter speeds, ISO 
+values, noise reduction setting, memory card speed, RAW saving, low light
+to name a few).
+
+This has mostly been fixed with a few get_prop 206 (or 205) commands and the
+default trigger delay is 0.5 s. If you experience loops anyway, try 
+increasing trigger delay (but more importantly, try increasing threshold 
+first).
+
+
+Burst/Review/Video time: 
+
+If 0, take single shots. If >0, how many seconds to keep shutter depressed. 
+If continuous shooting mode is enabled ("burst mode"), the camera will shoot
+using this mode, if it is not enabled, the camera will show the shot review
+for the specified time on LCD (unless your camera doesn't work this way or
+is configured in a way that disables this review feature; review by holding
+the shutter is a standard feature of your camera when it's in single shot
+drive mode).
+
+The script does not switch to continuous shooting mode, the user must do this
+before running the script from the camera's own menus.
+
+In video mode, this is the approximate duration of the video. Note that this
+is not an accurate value, it may typically be off by a second or two.
+
+
+Timeout:
+
+This is the timeout value for the motion detector. Most of the time this 
+script sits in the motion detection function waiting for motion. It exits
+this function only if motion is detected or enough time passes (timeout). 
+This timeout is specified in tens of seconds.
+
+Default is 30 = 300 seconds = 5 minutes.
+
+The longer the timeout, the more of the script's time will be spent in
+detecting motion. However, if you are not running in the "Slow Shoot" mode,
+and you have autoexposure or autofocus enabled, you may want to let the
+camera do those things every now and then. The default of 5 minutes should
+be short enough to adapt to changes in sunlight but long enough for almost
+perfect coverage in time spent detecting motion (if autoexposure + focus
+takes 3 seconds, this is 99 % coverage).
+
+
+Shoot fast/slow/test:
+
+When Fast shoot (0) is selected, this script acts as a fast react motion
+detector as described above. This means it first half presses the shutter
+(causing autoexposure and autofocus if those are currently enabled in your
+camera) and fully presses the shutter when it detects motion. This way the
+picture is taken very fast after motion is detected, but the problem is 
+that many objects may end up out of focus.
+
+If you enable slow shoot, the script will go into motion detection without
+pressing the shutter. When motion is detected, the shutter is pressed and
+thus exposure and focus are set and only when that's done with, a picture 
+is taken. This way the object will likely be in focus, but if it moves fast
+it may be long gone by the time the camera shoots.
+
+In test mode no photos will be taken. Instead, the script just draws the MD 
+grid and prints information about each detection which would have caused a 
+photo to be taken. This is good for fine tuning masks, camera orientation, 
+threshold and other settings without the need to delete any test images.
+
+
+Masking: 
+
+Using the four Mask/Use Columns/Rows Left/Right/Top/Bottom parameters you 
+can select any rectangular area on your LCD using your MD cell grid as the 
+resolution of this rectangle. You can then set the motion detector to 
+ignore everything inside that rectangular mask (Masking=1, Mask) or to use 
+only the cells in your mask for motion detection (Masking=2, Use). To 
+disable masking entirely, set Masking=0 (No). 
+
+The green motion detection grid is always up to date with the  masking 
+settings, so it's easy to see if you are getting the mask you wanted.
+Try test mode to verify the operation. Especially in video mode this
+is essential, because there's something wrong with it.
+
+(btw, this masking part was shamelessly copied directly from Barney Fife's 
+'MD LightningB3' script).
+
+-------------------------------------------------------------------------------
+
+Thanks go to MX3 for md_detect_motion, Barney Fife for masking
+code among other things, Anonymous for solving trigger delay loop
+problems and all the other lovely CHDK developers.
+
+Obviously, a standard disclaimer applies i.e. while I believe this script
+to be as safe as any part of CHDK, there is no warranty and if this
+breaks your camera or your marriage it is of your own responsibility
+entirely. In that case you may feel better if you blame the cat.
+
+-------------------------------------------------------------------------------
+
+TODO:
+- add option for number of continuous drive mode shoots to take using
+  the new command for this (get_exp_count?). Use get_drive_mode to 
+  avoid getting stuck if we're not in continous drive mode.
+
+- possibly make an option for not filling the card using the new disk space 
+  functions? Or maybe an "exit after N*10 photos"? Would be a good safety 
+  option when leaving the camera alone and fearing it may start triggering 
+  too often. Maybe even shut down camera at exit.
+
+- add test and warning about ae lock
+
+- Disable Ae beam during fast MD if flashlight is not disabled.
+  
+- Improve CHDK's md_detect_motion command by adding an option which draws
+  red dots over each active MD pixel. This would help users to better 
+  understand how large an object needs to be to reliably trigger the MD.
+
+- Maybe add an optional focus range option to the slow shoot modes, see
+  http://chdk.setepontos.com/index.php/topic,1526.0.html
+  
+---
+
+Changelog:
+
+MSDB 080914:
+- Now requires the new CHDK juciphox-allbest-trunk version, 
+  build 509 or higher (if your CHDK is older than September 14th 2008,
+  it is likely not compatible). 
+- No more separate versions for the two propsets (Digic II/III) thanks
+  to the new universal commands replacing get_prop commands. Models with
+  a separate video button still have their own version. Each version
+  now outputs an error if you try the wrong one.
+- For models with no video button, video/still mode is now autodetected
+  from mode dial position and thus the still photo/video parameter has been
+  removed.
+- Added commands to release shoot_half after taking a photo. This fixes
+  operation on IXUS750 and IXUS55, likely some others as well. On most
+  cameras releasing shoot_full was sufficient, but apparently not for all.
+  This change shouldn't break anything and it doesn't slow the script down
+  (it adds 10 ms to post-still-shoot operation (not reaction time), but the
+  propcase wait loop is probably equally shorter now, so re-arm is probably
+  just as fast as it was before).
+
+MDFB 080716:
+- Added test mode (Shoot fast=0,slow=1,test=2). In this mode no pictures
+  will be taken, but the motion detector grid will be drawn and results
+  of each detection are printed on the console. It's good for tweaking
+  masks, thresholds etc. without having to worry about deleting all
+  the test images.
+- Added test and warning message about flashlight usage to script start.
+- Fixed autoexposure on timeout for both fast md loops.
+- Documentation improvements (more tips, camera model list etc).
+
+MDFB 080419: 
+- Added video modes. To use them, select Video=1 AND put camera in 
+  video mode (in future video mode will be autodetected).
+  Video mode should work for all cameras. There are TWO video
+  modes, just like the still modes: fast and slow. The fast one sits
+  detecting motion with half_shoot pressed and slow one doesn't
+  press the shutter until it detects motion. Thus, the fast one
+  autofocuses at script start/timeout/re-arm (and exposure likely gets
+  treated similarly, but the camera adjusts it during record so it's
+  not a big issue). Note that video length argument is not accurate to
+  the second.
+- Small fix in slow mode burst timing
+- Note: Fast react video mode has an "unnecessary delay". It's there
+  because property 205/206 doesn't get set in video mode and is thus
+  useless to optimize trigger delay. If the user uses still and video
+  modes, he probably wants to use minimal trigger delay and that just
+  won't work for video. The fixed delay is there to make the problem
+  go away for most occasions. Alternatively one could add a separate
+  trigger delay option for fast react video.
+- DOC: added warnings about Ae lock and flash.
+- DOC: added note about shot review options
+- DOC: added note about using the zoom lever/buttons in script settings.
+
+MDFB 080411:
+  - initial test release
